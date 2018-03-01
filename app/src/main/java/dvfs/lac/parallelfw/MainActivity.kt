@@ -1,17 +1,22 @@
 package dvfs.lac.parallelfw
 
-import java.util.Random
+import android.content.Context
 import java.util.concurrent.Executors
 import android.support.v7.app.AppCompatActivity
 import android.os.Bundle
 import android.widget.TextView
-import android.text.TextUtils
 import android.os.AsyncTask
-import java.io.BufferedReader
-import java.io.IOException
-import java.io.InputStreamReader
 import java.net.MalformedURLException
 import java.net.URL
+import android.content.Context.MODE_PRIVATE
+import android.os.Environment
+import android.util.Log
+import java.io.*
+import android.widget.Toast
+//import android.support.test.internal.runner.junit4.statement.UiThreadStatement.runOnUiThread
+import android.content.ContentValues.TAG
+//import com.sun.xml.internal.ws.streaming.XMLStreamWriterUtil.getOutputStream
+import java.net.HttpURLConnection
 
 
 class MainActivity : AppCompatActivity() {
@@ -45,14 +50,147 @@ class MainActivity : AppCompatActivity() {
         override fun doInBackground(vararg urls: URL): String {
             downloadMap() // milestone 1
             updateScreen(screen, "Map Downloaded")
-            run() // milestone 2 and 3
-            updateScreen(screen,  "END")
-            // milestone 4 - serialize result in a file
+
+            val graph = buildGraph() // milestone 2
+            updateScreen(screen,  "Graph built")
+
+            val result = run(graph) // milestone 3
+            updateScreen(screen,  "Result Computed")
+
+            serializeResult(result) // milestone 4
+
+            updateScreen(screen,  "File serialized")
+
+            sendFileToServer() // milestone 5
+            updateScreen(screen,  "Data uploaded")
             // milestone 5 - send to network
             return ""
         }
 
         override fun onPostExecute(result: String) {
+        }
+
+        fun sendFileToServer(): Int {
+            var selectedFilePath = "" + Environment.getExternalStorageDirectory() + "/result.txt"
+            var serverResponseCode = 0
+
+            val connection: HttpURLConnection
+            val dataOutputStream: DataOutputStream
+            val lineEnd = "\r\n"
+            val twoHyphens = "--"
+            val boundary = "*****"
+
+            var bytesRead: Int
+            var bytesAvailable: Int
+            var bufferSize: Int
+            val buffer: ByteArray
+            val maxBufferSize = 1 * 1024 * 1024
+            val selectedFile = File(selectedFilePath)
+
+
+            val parts = selectedFilePath.split("/".toRegex()).dropLastWhile { it.isEmpty() }.toTypedArray()
+            val fileName = parts[parts.size - 1]
+
+            if (!selectedFile.isFile) {
+                //dialog.dismiss()
+
+                updateScreen(screen, "Source File Doesn't Exist: " + selectedFilePath)
+                return 0
+            } else {
+                try {
+                    val fileInputStream = FileInputStream(selectedFile)
+                    val url = URL("http://homepages.dcc.ufmg.br/~juniocezar/uploadFile.php")
+                    connection = url.openConnection() as HttpURLConnection
+                    connection.doInput = true //Allow Inputs
+                    connection.doOutput = true//Allow Outputs
+                    connection.useCaches = false//Don't use a cached Copy
+                    connection.requestMethod = "POST"
+                    connection.setRequestProperty("Connection", "Keep-Alive")
+                    connection.setRequestProperty("ENCTYPE", "multipart/form-data")
+                    connection.setRequestProperty("Content-Type", "multipart/form-data;boundary=" + boundary)
+                    connection.setRequestProperty("uploaded_file", selectedFilePath)
+
+                    //creating new dataoutputstream
+                    dataOutputStream = DataOutputStream(connection.getOutputStream())
+
+                    //writing bytes to data outputstream
+                    dataOutputStream.writeBytes(twoHyphens + boundary + lineEnd)
+                    dataOutputStream.writeBytes("Content-Disposition: form-data; name=\"uploaded_file\";filename=\""
+                            + selectedFilePath + "\"" + lineEnd)
+
+                    dataOutputStream.writeBytes(lineEnd)
+
+                    //returns no. of bytes present in fileInputStream
+                    bytesAvailable = fileInputStream.available()
+                    //selecting the buffer size as minimum of available bytes or 1 MB
+                    bufferSize = Math.min(bytesAvailable, maxBufferSize)
+                    //setting the buffer as byte array of size of bufferSize
+                    buffer = ByteArray(bufferSize)
+
+                    //reads bytes from FileInputStream(from 0th index of buffer to buffersize)
+                    bytesRead = fileInputStream.read(buffer, 0, bufferSize)
+
+                    //loop repeats till bytesRead = -1, i.e., no bytes are left to read
+                    while (bytesRead > 0) {
+                        //write the bytes read from inputstream
+                        dataOutputStream.write(buffer, 0, bufferSize)
+                        bytesAvailable = fileInputStream.available()
+                        bufferSize = Math.min(bytesAvailable, maxBufferSize)
+                        bytesRead = fileInputStream.read(buffer, 0, bufferSize)
+                    }
+
+                    dataOutputStream.writeBytes(lineEnd)
+                    dataOutputStream.writeBytes(twoHyphens + boundary + twoHyphens + lineEnd)
+
+                    serverResponseCode = connection.getResponseCode()
+                    val serverResponseMessage = connection.getResponseMessage()
+
+                    Log.i(TAG, "Server Response is: $serverResponseMessage: $serverResponseCode")
+
+                    //response code of 200 indicates the server status OK
+                    if (serverResponseCode == 200) {
+                        updateScreen(screen, "File Upload completed.")
+                    }
+
+                    //closing the input and output streams
+                    fileInputStream.close()
+                    dataOutputStream.flush()
+                    dataOutputStream.close()
+
+
+                } catch (e: FileNotFoundException) {
+                    e.printStackTrace()
+                    runOnUiThread { Toast.makeText(this@MainActivity, "File Not Found", Toast.LENGTH_SHORT).show() }
+                } catch (e: MalformedURLException) {
+                    e.printStackTrace()
+                    Toast.makeText(this@MainActivity, "URL error!", Toast.LENGTH_SHORT).show()
+
+                } catch (e: IOException) {
+                    e.printStackTrace()
+                    Toast.makeText(this@MainActivity, "Cannot Read/Write File!", Toast.LENGTH_SHORT).show()
+                }
+
+                return serverResponseCode
+            }
+
+        }
+
+        private fun serializeResult(data: DoubleArray?) {
+            val file = File(Environment.getExternalStorageDirectory(), "result.txt")
+            val stream = FileOutputStream(file)
+            val size = data!!.size
+
+            try {
+                for(i in 0 until size) {
+                    var out = data!![i].toString() + " "
+                    stream.write(out.toByteArray())
+                }
+            } catch (e: IOException) {
+                Log.e("Exception", "File write failed: " + e.toString())
+            } finally {
+                stream.close()
+            }
+
         }
 
         private fun downloadMap() {
@@ -77,6 +215,11 @@ class MainActivity : AppCompatActivity() {
 
             var nV = Integer.parseInt(map!!.readLine())
             var dist = Array(nV) { DoubleArray(nV) }
+            for (i in 0 until nV) {
+                for (j in 0 until nV) {
+                    dist[i][j] = Double.POSITIVE_INFINITY
+                }
+            }
 
             try {
                 // if not null
@@ -88,6 +231,7 @@ class MainActivity : AppCompatActivity() {
                     val x = edge[0].toInt()
                     val y = edge[1].toInt()
                     val w = edge[2].toDouble()
+                    //print("(" + x + ")(" + y + ")(" + w + ") = ")
                     dist[x][y] = w
                     line = map!!.readLine()
                 }
@@ -100,15 +244,11 @@ class MainActivity : AppCompatActivity() {
             return Pair(dist, nV)
         }
 
-        fun run () {
+        fun run (graph: Pair<Array<DoubleArray>, Int>): DoubleArray? {
 
-            var graph = buildGraph()
-
-            println("Graph built")
-            updateScreen(screen,  "Graph built")
 
             run {
-                val numThreads = 1
+                val numThreads = 8
                 val exec = Executors.newFixedThreadPool(numThreads)
                 val apspMulti = ParallelFloydWarshall(graph.second, graph.first, exec, numThreads)
                 println("Starting multi threaded")
@@ -119,39 +259,14 @@ class MainActivity : AppCompatActivity() {
 
                 println("Time in milliseconds multi threaded mode: " + seconds)
                 updateScreen(screen,  "Time in milliseconds multi threaded mode: " + seconds)
+                /*println("SP: " + apspMulti.shorestPathLength(218, 297));
                 exec.shutdown()
+                println("OLHA: " + apspMulti.current!![20])
+                for (index in 0 until graph.second) {
+                    print("" + apspMulti.current!![index] + " - ")
+                }*/
+                return apspMulti.current
             }
         }
-
-        private fun genDistanceMatrix(nV: Int, nE: Int, maxW: Int): Array<DoubleArray> {
-            var nE = nE
-            if (nE > nV.toLong() * (nV - 1) / 2) throw IllegalArgumentException("Too many edges")
-            if (nE < 0) throw IllegalArgumentException("Too few edges")
-
-            val dist = Array(nV) { DoubleArray(nV) }
-            val ran = Random()
-
-            for (i in 0 until nV) {
-                for (j in 0 until nV) {
-                    dist[i][j] = java.lang.Double.POSITIVE_INFINITY
-                }
-            }
-
-            while (nE > 0) {
-                val x = ran.nextInt(nV) + 0
-                val y = ran.nextInt(nV) + 0
-                val w = ran.nextInt(maxW) + 10
-                if (dist[x][y] == java.lang.Double.POSITIVE_INFINITY) {
-                    dist[x][y] = w.toDouble()
-                    nE--
-                }
-            }
-
-            return dist
-        }
-
     }
-
-
-
 }

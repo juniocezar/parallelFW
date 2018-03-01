@@ -13,7 +13,7 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Future
 
 class ParallelFloydWarshall @JvmOverloads constructor(private val numNodes: Int, distances: Array<DoubleArray>, private val mode: Mode = Mode.SINGLE_THREADED, private val exec: ExecutorService? = null, private val numThreads: Int = 1) {
-    private var current: DoubleArray? = null
+    var current: DoubleArray? = null
     private var next: DoubleArray? = null
 
     private val maxIndex: IntArray
@@ -47,6 +47,7 @@ class ParallelFloydWarshall @JvmOverloads constructor(private val numNodes: Int,
 
 
     init {
+
         this.next = DoubleArray(numNodes * numNodes)
         this.maxIndex = IntArray(numNodes * numNodes)
         Arrays.fill(maxIndex, -1)
@@ -68,6 +69,7 @@ class ParallelFloydWarshall @JvmOverloads constructor(private val numNodes: Int,
     }
 
     private fun updateMatrixMultiThreaded(k: Int) {
+
         val tasks = ArrayList<Callable<Boolean>>()
         if (current!!.size < numThreads) {
             for (i in current!!.indices) {

@@ -17,16 +17,66 @@ import android.widget.Toast
 import android.content.ContentValues.TAG
 //import com.sun.xml.internal.ws.streaming.XMLStreamWriterUtil.getOutputStream
 import java.net.HttpURLConnection
+import java.util.concurrent.TimeUnit
 
 
 class MainActivity : AppCompatActivity() {
     private var screen: TextView ?= null
+    private var id: Int = 0
 
     private fun updateScreen(ui: TextView?, text: String) {
         runOnUiThread {
             val current = "" + ui!!.text
             ui!!.text = current + "\n* " + text
         }
+    }
+
+    fun bindCPU (affinity: String) : String {
+        val command = "taskset -p " + affinity + " " + id.toString()
+        var output = " "
+        try {
+            // instantiating process builder
+            val p: Process
+            p = Runtime.getRuntime().exec(command)
+
+            // running command
+            p.waitFor()
+
+            val b = BufferedReader(InputStreamReader(p.inputStream))
+            var temp = b.readLine()
+
+            while (temp != null) {
+                output += temp + '\n'
+                temp = b.readLine()
+            }
+
+            b.close()
+        }
+        catch (e : IOException) {
+            Log.d("Lac", "Exception", e)
+        }
+
+        println(output)
+        return output
+    }
+
+    // gpioSetValue
+    // Set the value of the GPIO pin to 1 or 0
+    // Return: Success = 0 ; otherwise open file error
+    fun gpioSetValue (gpio: Int, value: String) : Int {
+
+        val outString: String = value
+        //File("/sys/class/gpio/gpio" + gpio + "/value").bufferedWriter().use { out -> out.write(outString) }
+
+        val pb: ProcessBuilder
+        val p: Process
+
+        pb = ProcessBuilder("su", "-c", "echo " + value + " > /sys/class/gpio/gpio" + gpio + "/value")
+        p = pb.start()
+        // running command
+        p.waitFor()
+
+        return 0
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -37,10 +87,15 @@ class MainActivity : AppCompatActivity() {
         screen!!.text = ""
         updateScreen(screen, "Initiating experiment")
 
+        id = android.os.Process.myPid()
+        val msg = bindCPU ("f0")
+
+
         /*Experiments will run on an AsyncTask, so we can update the screen
         * at the right time*/
         var exp = Experiment()
         exp.execute()
+
     }
 
     private inner class Experiment : AsyncTask<URL, Void, String>() {
@@ -48,22 +103,50 @@ class MainActivity : AppCompatActivity() {
         var map: BufferedReader ?= null
 
         override fun doInBackground(vararg urls: URL): String {
+            val startTime = System.currentTimeMillis()
+
+            gpioSetValue(31, "1")
+            TimeUnit.SECONDS.sleep(1)
+
+
+            updateScreen(screen, "Downloading Map")
+            gpioSetValue(31, "0")
             downloadMap() // milestone 1
-            updateScreen(screen, "Map Downloaded")
+            gpioSetValue(31, "1")
+            TimeUnit.SECONDS.sleep(1)
 
+            updateScreen(screen,  "Building Graph")
+            gpioSetValue(31, "0")
             val graph = buildGraph() // milestone 2
-            updateScreen(screen,  "Graph built")
+            gpioSetValue(31, "1")
+            TimeUnit.SECONDS.sleep(1)
 
+            //bindCPU("f0")
+            updateScreen(screen,  "Computing Paths")
+            gpioSetValue(31, "0")
             val result = run(graph) // milestone 3
-            updateScreen(screen,  "Result Computed")
+            gpioSetValue(31, "1")
+            TimeUnit.SECONDS.sleep(1)
+            //bindCPU("0f")
 
+            updateScreen(screen,  "Serializing Results to File")
+            gpioSetValue(31, "0")
             serializeResult(result) // milestone 4
+            gpioSetValue(31, "1")
+            TimeUnit.SECONDS.sleep(1)
+            //bindCPU("0f")
 
-            updateScreen(screen,  "File serialized")
-
+            updateScreen(screen,  "Uploading Data")
+            gpioSetValue(31, "0")
             sendFileToServer() // milestone 5
-            updateScreen(screen,  "Data uploaded")
+            gpioSetValue(31, "1")
+            updateScreen(screen,  "File Uploaded")
             // milestone 5 - send to network
+
+            val endTime = System.currentTimeMillis()
+            val seconds = endTime - startTime
+            println("Total time (ms): " + seconds)
+
             return ""
         }
 
@@ -177,13 +260,14 @@ class MainActivity : AppCompatActivity() {
 
         private fun serializeResult(data: DoubleArray?) {
             val file = File(Environment.getExternalStorageDirectory(), "result.txt")
-            val stream = FileOutputStream(file)
+            //val stream = FileOutputStream(file)
+            val stream = BufferedWriter(FileWriter(file))
             val size = data!!.size
 
             try {
                 for(i in 0 until size) {
                     var out = data!![i].toString() + " "
-                    stream.write(out.toByteArray())
+                    stream.write(out)
                 }
             } catch (e: IOException) {
                 Log.e("Exception", "File write failed: " + e.toString())
@@ -197,7 +281,7 @@ class MainActivity : AppCompatActivity() {
             var mUrl: URL ?= null
 
             try {
-                mUrl = URL("http://homepages.dcc.ufmg.br/~juniocezar/map1.in")
+                mUrl = URL("http://homepages.dcc.ufmg.br/~juniocezar/map2.in")
             } catch (e: MalformedURLException) {
                 e.printStackTrace()
             }
